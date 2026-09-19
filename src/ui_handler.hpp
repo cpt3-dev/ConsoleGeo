@@ -42,10 +42,12 @@ private:
     ftxui::Component cType_, cDir_, cUpdate_;
     ftxui::Component main_;
 
-    ftxui::ScreenInteractive screen_ = ftxui::ScreenInteractive::Fullscreen();
+    ftxui::ScreenInteractive screen_ = ftxui::ScreenInteractive::TerminalOutput();
 
     int typeIdx_ = 0;
     int dirIdx_ = 0;
+    std::vector<std::string> typeEntries_;
+    std::vector<std::string> dirEntries_;
 
     void build();
     void recalc();

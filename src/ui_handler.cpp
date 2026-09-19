@@ -1,6 +1,5 @@
 #include "ui_handler.hpp"
 #include <ftxui/dom/elements.hpp>
-#include <ftxui/dom/canvas.hpp>
 #include <cmath>
 #include <sstream>
 #include <iomanip>
@@ -39,8 +38,8 @@ namespace {
     struct CanvasDims {
         int termCols;
         int termRows;
-        int canvasPixelW;
-        int canvasPixelH;
+        int charW;
+        int charH;
     };
 
     CanvasDims computeCanvasDims(const ScreenInteractive& screen) {
@@ -52,16 +51,16 @@ namespace {
 
         int termCols = static_cast<int>(screenW * 0.68);
         if (termCols < 10) termCols = 10;
-        if (termCols > 400) termCols = 400;
+        if (termCols > 200) termCols = 200;
 
         int termRows = screenH - 2;
         if (termRows < 3)  termRows = 3;
-        if (termRows > 100) termRows = 100;
+        if (termRows > 50) termRows = 50;
 
-        int canvasPixelW = termCols * 2;
-        int canvasPixelH = termRows * 4;
+        int charW = termCols;
+        int charH = termRows;
 
-        return {termCols, termRows, canvasPixelW, canvasPixelH};
+        return {termCols, termRows, charW, charH};
     }
 }
 
@@ -108,11 +107,11 @@ void UIHandler::build() {
     cVYMin_ = Input(&sVYMin_, "yMin",  inputOpt);
     cVYMax_ = Input(&sVYMax_, "yMax",  inputOpt);
 
-    std::vector<std::string> typeEntries = {"Circle", "Ellipse", "Parabola", "Hyperbola"};
-    cType_ = Toggle(&typeEntries, &typeIdx_);
+    typeEntries_ = {"Circle", "Ellipse", "Parabola", "Hyperbola"};
+    cType_ = Toggle(&typeEntries_, &typeIdx_);
 
-    std::vector<std::string> dirEntries = {"Up", "Down", "Left", "Right"};
-    cDir_ = Toggle(&dirEntries, &dirIdx_);
+    dirEntries_ = {"Up", "Down", "Left", "Right"};
+    cDir_ = Toggle(&dirEntries_, &dirIdx_);
 
     cUpdate_ = Button("Update", [this] { recalc(); });
 
@@ -210,21 +209,115 @@ void UIHandler::build() {
 
     auto canvasRenderer = Renderer([&] {
         auto dims = computeCanvasDims(screen_);
-        return canvas(dims.canvasPixelW, dims.canvasPixelH,
-                      [&](Canvas& c) {
-            CoordinateCanvas coordCanvas(vxMin_, vxMax_, vyMin_, vyMax_,
-                                         c.width(), c.height());
-            coordCanvas.drawAllOn(c, makeConic(), pts_,
-                                  mouseValid_, mouseX_, mouseY_);
-        }) | flex | border;
+        int w = dims.charW;
+        int h = dims.charH;
+        
+        // Defensive checks to prevent invalid dimensions
+        if (w < 10 || w > 300) w = 80;
+        if (h < 5 || h > 100) h = 40;
+        
+        CoordinateCanvas coordCanvas(vxMin_, vxMax_, vyMin_, vyMax_, w, h);
+        return coordCanvas.render(makeConic(), pts_, mouseValid_, mouseX_, mouseY_);
     });
 
-    auto mainContainer = Container::Horizontal({
+    auto inputContainer = Container::Vertical({
+        cType_,
+        cH_,   cK_,   cR_,
+        cA_,   cB_,   cAng_,
+        cP_,   cDir_,
+        cLX1_, cLY1_, cLX2_, cLY2_,
+        cVXMin_, cVXMax_, cVYMin_, cVYMax_,
+        cUpdate_,
+    });
+
+    auto inputWithRenderer = Renderer(inputContainer, [&] {
+        std::vector<Element> rows;
+
+        rows.push_back(text("  Curve Type  ") | bold | center);
+        rows.push_back(cType_->Render() | center);
+        rows.push_back(separator());
+
+        switch (typeIdx_) {
+            case 0: {
+                conicType_ = ConicType::Circle;
+                rows.push_back(text("  Circle  ") | bold);
+                rows.push_back(hbox({text(" h:"), cH_->Render()  | size(WIDTH, EQUAL, 8),
+                                      text(" k:"), cK_->Render()  | size(WIDTH, EQUAL, 8),
+                                      text(" r:"), cR_->Render()  | size(WIDTH, EQUAL, 8)}));
+                break;
+            }
+            case 1: {
+                conicType_ = ConicType::Ellipse;
+                rows.push_back(text("  Ellipse  ") | bold);
+                rows.push_back(hbox({text(" h:"), cH_->Render()    | size(WIDTH, EQUAL, 8),
+                                      text(" k:"), cK_->Render()    | size(WIDTH, EQUAL, 8),
+                                      text(" a:"), cA_->Render()    | size(WIDTH, EQUAL, 8)}));
+                rows.push_back(hbox({text(" b:"), cB_->Render()    | size(WIDTH, EQUAL, 8),
+                                      text(" ang:"), cAng_->Render() | size(WIDTH, EQUAL, 8)}));
+                break;
+            }
+            case 2: {
+                conicType_ = ConicType::Parabola;
+                rows.push_back(text("  Parabola  ") | bold);
+                rows.push_back(hbox({text(" h:"), cH_->Render()  | size(WIDTH, EQUAL, 8),
+                                      text(" k:"), cK_->Render()  | size(WIDTH, EQUAL, 8),
+                                      text(" p:"), cP_->Render()  | size(WIDTH, EQUAL, 8)}));
+                rows.push_back(cDir_->Render() | center);
+                switch (dirIdx_) {
+                    case 0: pDir_ = ParabolaDirection::Up;    break;
+                    case 1: pDir_ = ParabolaDirection::Down;  break;
+                    case 2: pDir_ = ParabolaDirection::Left;  break;
+                    case 3: pDir_ = ParabolaDirection::Right; break;
+                }
+                break;
+            }
+            case 3: {
+                conicType_ = ConicType::Hyperbola;
+                rows.push_back(text("  Hyperbola  ") | bold);
+                rows.push_back(hbox({text(" h:"), cH_->Render()    | size(WIDTH, EQUAL, 8),
+                                      text(" k:"), cK_->Render()    | size(WIDTH, EQUAL, 8),
+                                      text(" a:"), cA_->Render()    | size(WIDTH, EQUAL, 8)}));
+                rows.push_back(hbox({text(" b:"), cB_->Render()    | size(WIDTH, EQUAL, 8),
+                                      text(" ang:"), cAng_->Render() | size(WIDTH, EQUAL, 8)}));
+                break;
+            }
+        }
+
+        rows.push_back(separator());
+        rows.push_back(text("  Line  ") | bold);
+        rows.push_back(hbox({text(" x1:"), cLX1_->Render() | size(WIDTH, EQUAL, 8),
+                              text(" y1:"), cLY1_->Render() | size(WIDTH, EQUAL, 8)}));
+        rows.push_back(hbox({text(" x2:"), cLX2_->Render() | size(WIDTH, EQUAL, 8),
+                              text(" y2:"), cLY2_->Render() | size(WIDTH, EQUAL, 8)}));
+
+        rows.push_back(separator());
+        rows.push_back(text("  Viewport  ") | bold);
+        rows.push_back(hbox({text(" xMin:"), cVXMin_->Render() | size(WIDTH, EQUAL, 8),
+                              text(" xMax:"), cVXMax_->Render() | size(WIDTH, EQUAL, 8)}));
+        rows.push_back(hbox({text(" yMin:"), cVYMin_->Render() | size(WIDTH, EQUAL, 8),
+                              text(" yMax:"), cVYMax_->Render() | size(WIDTH, EQUAL, 8)}));
+
+        rows.push_back(separator());
+        rows.push_back(cUpdate_->Render() | center);
+        rows.push_back(separator());
+        rows.push_back(text("  Status  ") | bold);
+        rows.push_back(text(status_));
+        rows.push_back(text(""));
+        rows.push_back(text("  S: square  R: sqrt  ") | dim);
+        rows.push_back(text("  Mouse click on canvas  ") | dim);
+        if (mouseValid_) {
+            rows.push_back(text("  Mouse: (" + fmtDouble(mouseX_) + ", " + fmtDouble(mouseY_) + ")"));
+        }
+
+        return vbox(rows) | border | size(WIDTH, EQUAL, 35);
+    });
+
+    main_ = Container::Vertical({
         canvasRenderer,
-        inputRenderer,
+        inputWithRenderer,
     });
 
-    main_ = CatchEvent(mainContainer, [this](Event e) {
+    main_ = CatchEvent(main_, [this](Event e) {
         return handleEvent(std::move(e));
     });
 }
@@ -389,7 +482,7 @@ void UIHandler::run() {
         auto dims = computeCanvasDims(screen_);
         std::cerr << "Screen dims: " << screen_.dimx() << " x " << screen_.dimy() << std::endl;
         std::cerr << "Canvas term: " << dims.termCols << " x " << dims.termRows << std::endl;
-        std::cerr << "Canvas pixel: " << dims.canvasPixelW << " x " << dims.canvasPixelH << std::endl;
+        std::cerr << "Canvas char: " << dims.charW << " x " << dims.charH << std::endl;
         std::cerr << "View range: [" << vxMin_ << ", " << vxMax_ << "] x ["
                   << vyMin_ << ", " << vyMax_ << "]" << std::endl;
         throw;
